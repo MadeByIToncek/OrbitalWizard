@@ -39,22 +39,11 @@ public class OrbitalWizard {
 		try (FileWriter fw = new FileWriter("./out.csv")) {
 			data.forEach((date, locations) -> {
 				HashMap<ThreeSet, Double> qualityMap = new HashMap<>();
+				locations.add(createSun());
 
 				for (Point3D obj1 : locations) {
 					for (Point3D obj2 : locations) {
-						ThreeSet ts = new ThreeSet(obj1.ident, createSun().ident, obj2.ident);
-						if (tripletValid(obj1, createSun(), obj2) && !qualityMap.containsKey(ts)) {
-							qualityMap.put(ts, computeDistance(obj1, createSun(), obj2));
-						}
-					}
-				}
-
-				ArrayList<Point3D> newLocations = new ArrayList<>(locations);
-				newLocations.add(createSun());
-
-				for (Point3D obj1 : newLocations) {
-					for (Point3D obj2 : newLocations) {
-						for (Point3D obj3 : newLocations) {
+						for (Point3D obj3 : locations) {
 							ThreeSet ts = new ThreeSet(obj1.ident, obj2.ident, obj3.ident);
 							if (tripletValid(obj1, obj2, obj3) && !qualityMap.containsKey(ts)) {
 								qualityMap.put(ts, computeDistance(obj1, obj2, obj3));
@@ -115,6 +104,7 @@ public class OrbitalWizard {
 		for (File dir : Objects.requireNonNull(new File("./process/").listFiles())) {
 			if(dir.isDirectory()) {
 				File targetDir = new File("X:\\test\\" + dir.getName());
+				targetDir.mkdirs();
 				for (File eph : Objects.requireNonNull(dir.listFiles())) {
 					File targetFile = new File(targetDir + "\\" + eph.getName());
 					boolean reading = false;
