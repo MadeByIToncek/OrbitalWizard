@@ -1,73 +1,103 @@
 package space.itoncek.orbitalwizard;
 
-import com.sun.source.tree.Tree;
+import org.apache.commons.io.IOUtils;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class OrbitalWizard {
-	public TreeMap<Double,ArrayList<Point3D>> data = new TreeMap<>();
-	public HashMap<Double,String> dateLookup = new HashMap<>();
+	public TreeMap<Double,ArrayList<Point2D>> data = new TreeMap<>();
+	public TreeMap<LocalDateTime,Double> flareData = new TreeMap<>();
+	public HashMap<Double, LocalDateTime> dateLookup = new HashMap<>();
 	public OrbitalWizard(String path) throws IOException {
 		long start = System.currentTimeMillis();
 		for (File dir : Objects.requireNonNull(new File(path).listFiles())) {
-			if(dir.isDirectory()) {
+			if (dir.isDirectory()) {
 				for (File eph : Objects.requireNonNull(dir.listFiles())) {
+					boolean reading = false;
 					for (String line : Files.readAllLines(eph.toPath(), Charset.defaultCharset())) {
-						//System.out.println(line);
-						String[] elements = line.split("\\r?,");
-						double date = Double.parseDouble(elements[0].trim().strip());
+						if (!reading) {
+							if (line.contains("$$SOE")) {
+								reading = true;
+							}
+						} else {
+							if (line.contains("$$EOE")) break;
+							else {
+								//System.out.println(line);
+								String[] elements = line.split("\\r?,");
+								double date = Double.parseDouble(elements[0].trim().strip());
 
-						if(!data.containsKey(date)) {
-							data.put(date, new ArrayList<>(20));
+								if (!data.containsKey(date)) {
+									data.put(date, new ArrayList<>(20));
+								}
+
+								if (!dateLookup.containsKey(date)) {
+									String stdate = elements[1].trim().strip().replace("Sep", "Sept");
+									dateLookup.put(date, LocalDateTime.parse(stdate, DateTimeFormatter.ofPattern("'A.D. 'yyyy-MMM-dd HH:mm:ss.SSSS")));
+								}
+
+								data.get(date).add(new Point2D(eph.getName(), Double.parseDouble(elements[2].trim().strip())/1e8, Double.parseDouble(elements[3].trim().strip())/1e8));
+							}
 						}
-
-						if(!dateLookup.containsKey(date)) {
-							dateLookup.put(date, elements[1].trim().strip());
-						}
-
-						data.get(date).add(new Point3D(eph.getName(), Double.parseDouble(elements[2].trim().strip()), Double.parseDouble(elements[3].trim().strip()), Double.parseDouble(elements[4].trim().strip())));
 					}
 				}
 			}
 		}
+		JSONArray array = new JSONArray(IOUtils.readLines(URI.create("https://services.swpc.noaa.gov/json/goes/primary/xrays-7-day.json").toURL().openStream(), Charset.defaultCharset()).stream().reduce((a,b) -> a+b).get());
+		for (int i = 0; i < array.length(); i++) {
+			JSONObject obj = array.getJSONObject(i);
+			LocalDateTime dateTime = LocalDateTime.parse(obj.getString("time_tag").substring(0,obj.getString("time_tag").length()-1),DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+			//System.out.println(dateTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) + " xray flux " + obj.getDouble("flux"));
+			flareData.put(dateTime,
+					obj.getDouble("flux"));
+		}
 		try (FileWriter fw = new FileWriter("./out.csv")) {
 			data.forEach((date, locations) -> {
-				HashMap<ThreeSet, Double> qualityMap = new HashMap<>();
+				HashMap<Triplet, Double> angles = new HashMap<>();
 				locations.add(createSun());
 
-				for (Point3D obj1 : locations) {
-					for (Point3D obj2 : locations) {
-						for (Point3D obj3 : locations) {
-							ThreeSet ts = new ThreeSet(obj1.ident, obj2.ident, obj3.ident);
-							if (tripletValid(obj1, obj2, obj3) && !qualityMap.containsKey(ts)) {
-								qualityMap.put(ts, computeDistance(obj1, obj2, obj3));
+				for (Point2D obj1 : locations) {
+					for (Point2D obj2 : locations) {
+						for (Point2D obj3 : locations) {
+							if (tripletValid(obj1, obj2, obj3)) {
+								double angle = computeAngle(obj1, obj2, obj3);
+								if ((angle >= 178) && (angle <= 182)) {
+									angles.put(new Triplet(obj1, obj2, obj3), angle);
+								}
 							}
 						}
 					}
 				}
 
-
-
-
-				AtomicReference<Double> min = new AtomicReference<>(Double.MAX_VALUE);
-				AtomicReference<ThreeSet> minset = new AtomicReference<>();
-
-				qualityMap.forEach((set, val) -> {
-					if (val < min.get()) {
-						minset.set(set);
-						min.set(val);
-					}
-				});
-
 				try {
-					fw.write(dateLookup.get(date) + "," + min.get() + "," + minset.get().toString() + "\n");
-				} catch (IOException e) {
+					double sum = angles.entrySet().parallelStream()
+							.map(e -> {
+								int score = getScore(e.getKey().a.ident) + getScore(e.getKey().b.ident) + getScore(e.getKey().c.ident);
+								double multiplier = (score * score / 1764.0) + 1;
+								return score * multiplier;
+							}).reduce(0d, Double::sum);
+					double lncount = Math.log(angles.size());
+					double mult = lncount * lncount + 1;
+
+					LocalDateTime dat = dateLookup.get(date);
+					String flare;
+					flare = flareData.get(dat) + "";
+					flare = flare == null?"":flare;
+
+					fw.write(dat.format(DateTimeFormatter.ISO_DATE_TIME) + "," + sum * mult + ", " + flare + "\n");
+				} catch (Exception e) {
 					throw new RuntimeException(e);
 				}
 			});
@@ -75,102 +105,64 @@ public class OrbitalWizard {
 		System.out.println(System.currentTimeMillis() - start + " ms");
 	}
 
-	private Point3D createSun() {
-		return new Point3D("SUN", 0,0,0);
+	private int getScore(String ident) {
+		return Integer.parseInt(ident.split("\\r?\\.")[1]);
 	}
 
-	private double computeDistance(Point3D A, Point3D B, Point3D C) {
-		Point3D d = C.subtract(B).divide(C.distance(B));
-		Point3D v = A.subtract(B);
-		double t = v.dot(d);
-		Point3D P = B.add(d.mult(t));
-		return P.distance(A);
+	private Point2D createSun() {
+		return new Point2D("sol.24", 0,0);
 	}
 
-	private boolean tripletValid(Point3D obj1, Point3D obj2, Point3D obj3) {
+	private double computeAngle(Point2D A, Point2D B, Point2D C) {
+		double a = A.distance(C);
+		double b = B.distance(C);
+		double c = A.distance(B);
+		double left = Math.toDegrees(Math.acos(((a * a) + (b * b) - (c * c)) / (2d * a * b)));
+
+		if(!Double.isNaN(left)) return left;
+		else return -1;
+	}
+
+	private boolean tripletValid(Point2D obj1, Point2D obj2, Point2D obj3) {
 		return !Objects.equals(obj1.ident, obj2.ident) && !Objects.equals(obj2.ident, obj3.ident) && !Objects.equals(obj1.ident, obj3.ident);
 	}
 
-	private boolean alreadyMatched(String obj1, String obj2, HashMap<String, String> matches) {
-		return (matches.containsKey(obj1) && matches.get(obj1).equals(obj2)) || (matches.containsKey(obj2) && matches.get(obj2).equals(obj1));
-	}
-
 	public static void main(String[] args) throws IOException {
-		if(args.length == 1) processFiles();
-		else new OrbitalWizard("X:\\test");
+		new OrbitalWizard("./process");
 	}
 
-	private static void processFiles() throws IOException {
-		for (File dir : Objects.requireNonNull(new File("./process/").listFiles())) {
-			if(dir.isDirectory()) {
-				File targetDir = new File("X:\\test\\" + dir.getName());
-				targetDir.mkdirs();
-				for (File eph : Objects.requireNonNull(dir.listFiles())) {
-					File targetFile = new File(targetDir + "\\" + eph.getName());
-					boolean reading = false;
-					try (FileWriter fw = new FileWriter(targetFile)) {
-						for (String line : Files.readAllLines(eph.toPath(), Charset.defaultCharset())) {
-							if (!reading) {
-								if (line.contains("$$SOE")) {
-									reading = true;
-								}
-							} else {
-								if (line.contains("$$EOE")) break;
-								else fw.write(line + "\n");
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	public record Point3D(String ident, double x, double y, double z) {
-		public Point3D add(Point3D b) {
-			return new Point3D("nil",x+b.x, y+b.y, z+b.z);
+	public record Point2D(String ident, double x, double y) {
+		public Point2D add(Point2D b) {
+			return new Point2D("nil",x+b.x, y+b.y);
 		}
 
-		public Point3D subtract(Point3D b) {
-			return new Point3D("nil",x-b.x, y-b.y, z-b.z);
+		public Point2D subtract(Point2D b) {
+			return new Point2D("nil",x-b.x, y-b.y);
 		}
 
-		public Point3D mult(double t) {
-			return new Point3D("nil", x*t,y*t,z*t);
+		public Point2D mult(double t) {
+			return new Point2D("nil", x*t,y*t);
 		}
 
-		public Point3D divide(double factor) {
-			return new Point3D("nil", x/factor,y/factor,z/factor);
+		public Point2D divide(double factor) {
+			return new Point2D("nil", x/factor,y/factor);
 		}
 
-		public double distance(Point3D b) {
-			return Math.sqrt(Math.pow(x-b.x,2) + Math.pow(y-b.y,2) + Math.pow(z-b.z,2));
+		public double distance(Point2D b) {
+			return Math.sqrt(Math.pow(x-b.x,2) + Math.pow(y-b.y,2));
 		}
 
-		public double dot(Point3D b) {
-			return x*b.x + y*b.y + z*b.z;
+		public double dot(Point2D b) {
+			return x*b.x + y*b.y;
 		}
 	}
 
-	private record ThreeSet(String a, String b, String c){
-		@Override
-		public boolean equals(Object obj) {
-			if(obj instanceof ThreeSet set) {
-				HashSet<String> me = HashSet.newHashSet(3);
-				me.add(a);
-				me.add(b);
-				me.add(c);
-				return me.contains(set.a) && me.contains(set.b) && me.contains(set.c);
-			} else return false;
-		}
-
-		@Override
-		public int hashCode() {
-			return Objects.hashCode(a) + Objects.hashCode(b) + Objects.hashCode(c);
-		}
-
-		@Override
-		public String toString() {
-			return a + " - " + b + " - " + c;
-		}
+	/**
+	 * Defines object triplet
+	 * @param a start object
+	 * @param b	outlier
+	 * @param c end object
+	 */
+	private record Triplet(Point2D a, Point2D b, Point2D c) {
 	}
 }
