@@ -1,15 +1,10 @@
 package space.itoncek.orbitalwizard;
 
 import org.apache.commons.io.IOUtils;
-import org.apfloat.Apfloat;
-import org.apfloat.ApfloatMath;
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
@@ -19,7 +14,7 @@ import java.util.*;
 
 public class OrbitalWizard {
 	public TreeMap<Double,ArrayList<Point2D>> data = new TreeMap<>();
-	public TreeMap<LocalDateTime,Double> flareData = new TreeMap<>();
+//	public TreeMap<LocalDateTime,Double> flareData = new TreeMap<>();
 	public HashMap<Double, LocalDateTime> dateLookup = new HashMap<>();
 	public OrbitalWizard() throws IOException {
 		long start = System.currentTimeMillis();
@@ -89,14 +84,14 @@ public class OrbitalWizard {
 
 		}
 
-		JSONArray array = new JSONArray(IOUtils.readLines(URI.create("https://services.swpc.noaa.gov/json/goes/primary/xrays-7-day.json").toURL().openStream(), Charset.defaultCharset()).stream().reduce((a,b) -> a+b).get());
-		for (int i = 0; i < array.length(); i++) {
-			JSONObject obj = array.getJSONObject(i);
-			LocalDateTime dateTime = LocalDateTime.parse(obj.getString("time_tag").substring(0,obj.getString("time_tag").length()-1),DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-			//System.out.println(dateTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) + " xray flux " + obj.getDouble("flux"));
-			flareData.put(dateTime,
-					obj.getDouble("flux"));
-		}
+//		JSONArray array = new JSONArray(IOUtils.readLines(URI.create("https://services.swpc.noaa.gov/json/goes/primary/xrays-7-day.json").toURL().openStream(), Charset.defaultCharset()).stream().reduce((a,b) -> a+b).get());
+//		for (int i = 0; i < array.length(); i++) {
+//			JSONObject obj = array.getJSONObject(i);
+//			LocalDateTime dateTime = LocalDateTime.parse(obj.getString("time_tag").substring(0,obj.getString("time_tag").length()-1),DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+//			//System.out.println(dateTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) + " xray flux " + obj.getDouble("flux"));
+//			flareData.put(dateTime,
+//					obj.getDouble("flux"));
+//		}
 
 
 		try (FileWriter fw = new FileWriter("./out.csv")) {
@@ -130,10 +125,10 @@ public class OrbitalWizard {
 
 
 					LocalDateTime dat = dateLookup.get(date);
-					String flare;
-					flare = flareData.get(dat) + "";
+//					String flare;
+//					flare = flareData.get(dat) + "";
 
-					fw.write(dat.format(DateTimeFormatter.ISO_DATE_TIME) + "," + sum * mult + ", " + flare + "\n");
+					fw.write(dat.format(DateTimeFormatter.ISO_DATE_TIME) + "," + sum * mult + /*", " + flare +*/ "\n");
 				} catch (Exception e) {
 					throw new RuntimeException(e);
 				}
